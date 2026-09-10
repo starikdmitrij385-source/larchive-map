@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Выбор пункта выдачи</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  /* Цвета берём у Telegram: страница должна выглядеть частью переписки,
+     а не чужим сайтом. Значения в скобках — на случай, если приложение
+     их не дало (открыли в обычном браузере). */
+  :root {
+    --фон: var(--tg-theme-bg-color, #ffffff);
+    --текст: var(--tg-theme-text-color, #000000);
+    --тусклый: var(--tg-theme-hint-color, #707579);
+    --полотно: var(--tg-theme-secondary-bg-color, #f1f1f1);
+    --кнопка: var(--tg-theme-button-color, #40a7e3);
+    --на-кнопке: var(--tg-theme-button-text-color, #ffffff);
+    --пятьпост: #e4002b;
+    --яндекс: #ffcc00;
+    --обе: #6c3fd8;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--текст); background: var(--фон);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #карта { flex: 1 1 auto; min-height: 0; }
+
+  /* Поиск сверху — поверх карты, но не закрывая её. */
+  #поиск {
+    position: absolute; z-index: 1000; top: 8px; left: 8px; right: 8px;
+    display: flex; gap: 6px;
+  }
+  #строка {
+    flex: 1 1 auto; min-width: 0; height: 40px; padding: 0 12px;
+    border: none; border-radius: 10px; font-size: 16px;
+    color: var(--текст); background: var(--фон);
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  #строка::placeholder { color: var(--тусклый); }
+  .круглая {
+    flex: 0 0 auto; width: 40px; height: 40px; border: none; border-radius: 10px;
+    background: var(--фон); color: var(--текст); font-size: 18px; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+
+  /* Подсказка о масштабе и что сейчас видно. */
+  #весть {
+    position: absolute; z-index: 1000; top: 56px; left: 8px; right: 8px;
+    padding: 8px 12px; border-radius: 10px; font-size: 13px;
+    color: var(--текст); background: var(--фон);
+    box-shadow: 0 2px 8px rgba(0,0,0,.2); display: none;
+  }
+
+  /* Карточка выбранного места — снизу, над картой. */
+  #карточка {
+    flex: 0 0 auto; padding: 12px 14px 14px;
+    background: var(--фон); box-shadow: 0 -2px 12px rgba(0,0,0,.18);
+    display: none;
+  }
+  #карточка.видна { display: block; }
+  #адрес { font-weight: 600; font-size: 16px; }
+  #подпись { color: var(--тусклый); font-size: 13px; margin-top: 2px; }
+  #службы { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .выбрать {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer;
+    font-size: 15px; font-weight: 600; text-align: left;
+    color: var(--на-кнопке); background: var(--кнопка);
+  }
+  .значок {
+    flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.5);
+  }
+  .цена { font-weight: 400; opacity: .85; font-size: 13px; }
+
+  /* Ближайшие к дому — списком под адресом дома. */
+  #рядом { margin-top: 10px; }
+  .рядом-строка {
+    display: flex; align-items: baseline; gap: 8px; padding: 7px 0; cursor: pointer;
+    border-top: 1px solid var(--полотно);
+  }
+  .рядом-строка .км { color: var(--тусклый); font-size: 13px; white-space: nowrap; }
+  .точка { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+
+  .leaflet-container { background: var(--полотно); font: inherit; }
+  .сгусток {
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; color: #fff; font-weight: 700; font-size: 12px;
+    background: rgba(108,63,216,.85); box-shadow: 0 0 0 3px rgba(108,63,216,.3);
+  }
+</style>
+</head>
+<body>
+
+<div id="поиск">
+  <input id="строка" type="search" enterkeyhint="search" placeholder="Улица, дом или город">
+  <button class="круглая" id="кн-искать" title="Найти">🔍</button>
+  <button class="круглая" id="кн-я" title="Где я">📍</button>
+</div>
+<div id="весть"></div>
+
+<div id="карта"></div>
+
+<div id="карточка">
+  <div id="адрес"></div>
+  <div id="подпись"></div>
+  <div id="службы"></div>
+  <div id="рядом"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+"use strict";
+
+// Шаг сетки обязан совпадать с `плитки_пунктов.ШАГ`: по нему считаются
+// имена файлов, и разойдись они — страница будет просить плитки, которых
+// нет, и показывать пустую карту над полным справочником.
+const ШАГ = 0.1;
+// Ниже этого масштаба плитки не грузим: их были бы тысячи. Вместо
+// пунктов рисуем кружки с числом — «тут есть, приблизьте».
+const ПОРОГ_ЗУМА = 11;
+// Сколько плиток готовы взять за один сдвиг карты. Восемь на восемь —
+// это примерно вся Москва внутри МКАД.
+const ПРЕДЕЛ_ПЛИТОК = 64;
+// Nominatim просит не чаще одного запроса в секунду. Держим слово.
+const ПАУЗА_ГЕОКОДЕРА = 1100;
+
+const ПЯТЬПОСТ = 0, ЯНДЕКС = 1;
+const СЛУЖБЫ = {
+  0: { код: "fivepost", имя: "5Post", цвет: "#e4002b" },
+  1: { код: "yandex",   имя: "Яндекс Доставка", цвет: "#ffcc00" },
+};
+const ЦВЕТ_ОБЕИХ = "#6c3fd8";
+// Вид пункта 5Post словами. Человеку «TOBACCO» не говорит ничего, а
+// «в магазине» говорит: он поймёт, куда идёт.
+const ВИД_5POST = {
+  TOBACCO: "в магазине", POSTAMAT: "постамат", ISSUE_POINT: "пункт выдачи",
+};
+const ВИД_ЯНДЕКСА = {
+  0: "в Пятёрочке", 1: "пункт Яндекс Маркета", 2: "пункт партнёра", 3: "постамат",
+};
+
+const ТГ = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (ТГ) { ТГ.ready(); ТГ.expand(); }
+
+// Откуда начинаем смотреть. Бот подставляет город заказа, если знает
+// его; не знает — Москва, но с мелким масштабом, чтобы человек сразу
+// понял, что карту надо двигать.
+const дано = new URLSearchParams(location.search);
+const НАЧАЛО = {
+  ш: Number(дано.get("ш")) || 55.7522,
+  д: Number(дано.get("д")) || 37.6156,
+  z: Number(дано.get("z")) || (дано.get("ш") ? 13 : 10),
+};
+
+// Какие службы показывать. Бот пишет это, когда вторая выключена в
+// настройках: показать пункты службы, которой мы не возим, значит дать
+// выбрать то, что бот потом не примет.
+const ТОЛЬКО = (дано.get("службы") || "")
+  .split(",").map((с) => с.trim()).filter(Boolean);
+function служба_годится(служба) {
+  return !ТОЛЬКО.length || ТОЛЬКО.includes(СЛУЖБЫ[служба[0]].код);
+}
+
+const карта = L.map("карта", { zoomControl: false, attributionControl: true })
+  .setView([НАЧАЛО.ш, НАЧАЛО.д], НАЧАЛО.z);
+L.control.zoom({ position: "bottomleft" }).addTo(карта);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "© OpenStreetMap",
+}).addTo(карта);
+
+const слой_мест = L.layerGroup().addTo(карта);
+const слой_сгустков = L.layerGroup().addTo(карта);
+let слой_дома = null;
+
+// Плитка, однажды взятая, больше не качается: человек возит карту
+// туда-сюда, и повторные запросы — это только трата его связи.
+const плитки = new Map();
+// Всё, что уже показано, — по опознавателю места, чтобы не рисовать
+// одно и то же дважды на стыке плиток.
+const показаны = new Map();
+// Сгустки берём один раз: список крупных ячеек не меняется, пока не
+// пересобраны плитки.
+let сгустки_свода = null;
+
+const весть = document.getElementById("весть");
+const карточка = document.getElementById("карточка");
+
+function сказать(текст) {
+  весть.textContent = текст || "";
+  весть.style.display = текст ? "block" : "none";
+}
+
+function ключ_ячейки(ш, д, шаг) {
+  return Math.floor(ш / шаг) + "_" + Math.floor(д / шаг);
+}
+
+async function взять_плитку(ключ) {
+  if (плитки.has(ключ)) return плитки.get(ключ);
+  let записи = [];
+  try {
+    const ответ = await fetch("плитки/" + ключ + ".json", { cache: "force-cache" });
+    // Пустая ячейка — обычное дело: в океане и в тайге пунктов нет, и
+    // файла для них тоже нет. Это не поломка, а «тут никого».
+    if (ответ.ok) записи = await ответ.json();
+  } catch (е) {
+    записи = [];
+  }
+  плитки.set(ключ, записи);
+  return записи;
+}
+
+function цвет_места(службы) {
+  if (службы.length > 1) return ЦВЕТ_ОБЕИХ;
+  return СЛУЖБЫ[службы[0][0]].цвет;
+}
+
+function вид_пункта(служба) {
+  const [код, , тип] = служба;
+  if (код === ПЯТЬПОСТ) return ВИД_5POST[тип] || "пункт выдачи";
+  return ВИД_ЯНДЕКСА[тип] || "пункт выдачи";
+}
+
+function опознаватель_места(запись) {
+  return запись[0].toFixed(5) + "," + запись[1].toFixed(5);
+}
+
+function нарисовать(запись) {
+  const [ш, д, адрес, город, службы] = запись;
+  const цвет = цвет_места(службы);
+  const кружок = L.circleMarker([ш, д], {
+    // Обводка тёмная у жёлтого и белая у остальных: белая по белой
+    // карте вокруг жёлтого кружка не видна вовсе.
+    radius: 7, weight: 2, opacity: .9, fillOpacity: 1,
+    color: цвет === СЛУЖБЫ[ЯНДЕКС].цвет ? "#5a4a00" : "#ffffff",
+    fillColor: цвет,
+  });
+  // Всплытие останавливаем нарочно: у векторных слоёв Leaflet клик
+  // доходит и до карты, а карта считает всякий клик тыком в дом — и
+  // карточка выбранного пункта тут же затиралась адресом дома под ним.
+  кружок.on("click", (событие) => {
+    L.DomEvent.stopPropagation(событие);
+    показать_место(запись);
+  });
+  кружок.addTo(слой_мест);
+  return кружок;
+}
+
+async function обновить() {
+  const зум = карта.getZoom();
+  слой_сгустков.clearLayers();
+
+  if (зум < ПОРОГ_ЗУМА) {
+    слой_мест.clearLayers();
+    показаны.clear();
+    await нарисовать_сгустки();
+    return;
+  }
+
+  const рамка = карта.getBounds();
+  const ю = Math.floor(рамка.getSouth() / ШАГ), с = Math.floor(рамка.getNorth() / ШАГ);
+  const з = Math.floor(рамка.getWest() / ШАГ), в = Math.floor(рамка.getEast() / ШАГ);
+  const сколько = (с - ю + 1) * (в - з + 1);
+  if (сколько > ПРЕДЕЛ_ПЛИТОК) {
+    сказать("Приблизьте карту — покажу пункты выдачи.");
+    return;
+  }
+
+  const нужные = [];
+  for (let a = ю; a <= с; a++) for (let b = з; b <= в; b++) нужные.push(a + "_" + b);
+  const пачки = await Promise.all(нужные.map(взять_плитку));
+
+  слой_мест.clearLayers();
+  показаны.clear();
+  let всего = 0;
+  for (const пачка of пачки) {
+    for (const запись of пачка) {
+      // За рамкой рисовать незачем: плитка шире экрана, и лишние
+      // кружки только тормозят телефон.
+      if (!рамка.contains([запись[0], запись[1]])) continue;
+      const ключ = опознаватель_места(запись);
+      if (показаны.has(ключ)) continue;
+      const свои = запись[4].filter(служба_годится);
+      if (!свои.length) continue;
+      // Место оставляем, но с одними разрешёнными службами: иначе на
+      // булавке появилась бы кнопка выключенной службы.
+      const место = [запись[0], запись[1], запись[2], запись[3], свои];
+      показаны.set(ключ, место);
+      нарисовать(место);
+      всего++;
+    }
+  }
+  сказать(всего ? "" : "Здесь пунктов нет — подвиньте карту или найдите свой адрес.");
+}
+
+async function нарисовать_сгустки() {
+  if (!сгустки_свода) {
+    try {
+      const ответ = await fetch("свод.json", { cache: "force-cache" });
+      сгустки_свода = ответ.ok ? (await ответ.json()).сгустки || [] : [];
+    } catch (е) { сгустки_свода = []; }
+  }
+  const рамка = карта.getBounds();
+  for (const [ш, д, сколько] of сгустки_свода) {
+    if (!рамка.contains([ш, д])) continue;
+    const бок = сколько > 999 ? 46 : сколько > 99 ? 40 : 34;
+    L.marker([ш, д], {
+      icon: L.divIcon({
+        className: "",
+        html: '<div class="сгусток" style="width:' + бок + 'px;height:' + бок + 'px">' + сколько + "</div>",
+        iconSize: [бок, бок], iconAnchor: [бок / 2, бок / 2],
+      }),
+    }).on("click", (событие) => {
+      L.DomEvent.stopPropagation(событие);
+      карта.setView([ш, д], ПОРОГ_ЗУМА + 1);
+    }).addTo(слой_сгустков);
+  }
+  сказать("Приблизьте карту — покажу пункты выдачи.");
+}
+
+function показать_место(запись) {
+  const [ш, д, адрес, город, службы] = запись;
+  document.getElementById("адрес").textContent = адрес;
+  document.getElementById("подпись").textContent =
+    город + " · " + службы.map(вид_пункта).join(" / ");
+  document.getElementById("рядом").innerHTML = "";
+
+  const где = document.getElementById("службы");
+  где.innerHTML = "";
+  for (const служба of службы) {
+    const сведения = СЛУЖБЫ[служба[0]];
+    const кнопка = document.createElement("button");
+    кнопка.className = "выбрать";
+    кнопка.innerHTML =
+      '<span class="значок" style="background:' + сведения.цвет + '"></span>' +
+      "<span>Забирать здесь" +
+      (службы.length > 1 ? " · " + сведения.имя : "") +
+      '<br><span class="цена">' + вид_пункта(служба) +
+      (службы.length > 1 ? "" : " · " + сведения.имя) + "</span></span>";
+    кнопка.onclick = () => отдать_выбор(запись, служба);
+    где.appendChild(кнопка);
+  }
+  карточка.classList.add("видна");
+  карта.panTo([ш, д], { animate: true });
+}
+
+function отдать_выбор(запись, служба) {
+  const [ш, д, адрес, город] = запись;
+  const выбранное = {
+    вид: "пункт",
+    служба: СЛУЖБЫ[служба[0]].код,
+    опознаватель: служба[1],
+    адрес: адрес,
+    город: город,
+    ш: ш,
+    д: д,
+  };
+  if (!ТГ || !ТГ.sendData) {
+    alert("Эту страницу нужно открывать кнопкой из бота — только так он получит ваш выбор.");
+    return;
+  }
+  // sendData закрывает мини-аппу сам: ответ покупатель увидит уже в
+  // переписке, и подтверждать выбор дважды ему не придётся.
+  ТГ.sendData(JSON.stringify(выбранное));
+}
+
+// ——— дом как ориентир ———
+// Владелец 10 сентября 2026 выбрал: дом на карте нужен, чтобы ткнуть в
+// него и увидеть, какие пункты рядом. Доставка по-прежнему до пункта, к
+// двери никто не едет.
+
+let когда_геокодер = 0;
+async function геокодер(путь) {
+  const пауза = ПАУЗА_ГЕОКОДЕРА - (Date.now() - когда_геокодер);
+  if (пауза > 0) await new Promise((и) => setTimeout(и, пауза));
+  когда_геокодер = Date.now();
+  const ответ = await fetch("https://nominatim.openstreetmap.org/" + путь, {
+    headers: { "Accept-Language": "ru" },
+  });
+  if (!ответ.ok) throw new Error("геокодер " + ответ.status);
+  return ответ.json();
+}
+
+function расстояние(а, б) {
+  // Считаем по-простому, плоскостью: на десятке километров разница с
+  // честной сферой меньше метра, а ближайший пункт нужен сейчас.
+  const кш = 111.32, кд = 111.32 * Math.cos((а[0] * Math.PI) / 180);
+  return Math.hypot((а[0] - б[0]) * кш, (а[1] - б[1]) * кд);
+}
+
+function показать_дом(ш, д, адрес) {
+  if (слой_дома) карта.removeLayer(слой_дома);
+  слой_дома = L.marker([ш, д], {
+    icon: L.divIcon({
+      className: "",
+      html: '<div style="font-size:26px;line-height:26px">🏠</div>',
+      iconSize: [26, 26], iconAnchor: [13, 26],
+    }),
+  }).addTo(карта);
+
+  document.getElementById("адрес").textContent = адрес || "Выбранное место";
+  document.getElementById("подпись").textContent = "Отсюда считаю ближайшие пункты";
+  document.getElementById("службы").innerHTML = "";
+
+  const рядом = [...показаны.values()]
+    .map((з) => ({ з, км: расстояние([ш, д], [з[0], з[1]]) }))
+    .sort((а, б) => а.км - б.км)
+    .slice(0, 5);
+
+  const где = document.getElementById("рядом");
+  где.innerHTML = "";
+  if (!рядом.length) {
+    где.innerHTML = '<div class="рядом-строка" style="cursor:default">' +
+      "<span>Пунктов рядом не видно — приблизьте карту.</span></div>";
+  }
+  for (const { з, км } of рядом) {
+    const строка = document.createElement("div");
+    строка.className = "рядом-строка";
+    строка.innerHTML =
+      '<span class="точка" style="background:' + цвет_места(з[4]) + '"></span>' +
+      "<span>" + з[2] + '</span><span class="км" style="margin-left:auto">' +
+      (км < 1 ? Math.round(км * 1000) + " м" : км.toFixed(1) + " км") + "</span>";
+    строка.onclick = () => показать_место(з);
+    где.appendChild(строка);
+  }
+  карточка.classList.add("видна");
+}
+
+карта.on("click", async (событие) => {
+  const { lat, lng } = событие.latlng;
+  показать_дом(lat, lng, "Ищу адрес…");
+  try {
+    const ответ = await геокодер(
+      "reverse?format=jsonv2&zoom=18&lat=" + lat + "&lon=" + lng
+    );
+    const а = ответ.address || {};
+    const строка = [а.road, а.house_number].filter(Boolean).join(", ") ||
+      ответ.display_name || "Выбранное место";
+    показать_дом(lat, lng, строка);
+  } catch (е) {
+    показать_дом(lat, lng, "Выбранное место");
+  }
+});
+
+// ——— поиск и «где я» ———
+
+async function искать() {
+  const запрос = document.getElementById("строка").value.trim();
+  if (!запрос) return;
+  сказать("Ищу «" + запрос + "»…");
+  try {
+    const найдено = await геокодер(
+      "search?format=jsonv2&countrycodes=ru&limit=1&accept-language=ru&q=" +
+      encodeURIComponent(запрос)
+    );
+    if (!найдено.length) { сказать("Такого адреса не нашлось. Попробуйте иначе."); return; }
+    сказать("");
+    карта.setView([Number(найдено[0].lat), Number(найдено[0].lon)], 15);
+  } catch (е) {
+    сказать("Поиск не ответил. Подвиньте карту руками.");
+  }
+}
+
+document.getElementById("кн-искать").onclick = искать;
+document.getElementById("строка").addEventListener("keydown", (е) => {
+  if (е.key === "Enter") { е.preventDefault(); искать(); }
+});
+document.getElementById("кн-я").onclick = () => {
+  if (!navigator.geolocation) { сказать("Телефон не дал определить место."); return; }
+  сказать("Определяю, где вы…");
+  navigator.geolocation.getCurrentPosition(
+    (место) => {
+      сказать("");
+      карта.setView([место.coords.latitude, место.coords.longitude], 15);
+    },
+    () => сказать("Не получилось определить место — найдите адрес поиском."),
+    { enableHighAccuracy: true, timeout: 8000 }
+  );
+};
+
+карта.on("moveend zoomend", обновить);
+обновить();
+</script>
+</body>
+</html>
